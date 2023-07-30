@@ -1,8 +1,16 @@
 import * as THREE from "three";
-import { Canvas, extend, useFrame } from "@react-three/fiber";
-import { OrbitControls, shaderMaterial } from "@react-three/drei";
-import { useRef } from "react";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { OrbitControls } from "@react-three/drei";
+
+import { extend } from "@react-three/fiber";
+import { shaderMaterial } from "@react-three/drei";
+
 import { data } from "./data";
+
+import { Tubes } from "./BrainTubes";
+import { useEffect, useMemo, useRef } from "react";
+
+const randomRange = (min, max) => Math.random() * (max - min) + min;
 
 const brainCurves = [];
 data.economics[0].paths.forEach((path) => {
@@ -15,72 +23,124 @@ data.economics[0].paths.forEach((path) => {
   brainCurves.push(tempCurve);
 });
 
-function Tube({ curve }) {
-  const brainMat = useRef();
+function BrainParticls({ allTheCurves }) {
+  const density = 10;
+  const numbersOfPoints = density * allTheCurves.length;
 
-  useFrame(({ clock }) => {
-    brainMat.current.uniforms.time.value = clock.getElapsedTime();
+  const myPoints = useRef([]);
+  const brainGeo = useRef(null);
+
+  const positions = useMemo(() => {
+    const positions = [];
+    for (let i = 0; i < numbersOfPoints; i++) {
+      positions.push(
+        randomRange(-1, 1),
+        randomRange(-1, 1),
+        randomRange(-1, 1)
+      );
+    }
+    return new Float32Array(positions);
+  }, [numbersOfPoints]);
+
+  const randomsSize = useMemo(() => {
+    const randomsSize = [];
+    for (let i = 0; i < numbersOfPoints; i++) {
+      randomsSize.push(randomRange(0.3, 0.7));
+    }
+    return new Float32Array(randomsSize);
+  }, [numbersOfPoints]);
+
+  useEffect(() => {
+    for (let i = 0; i < allTheCurves.length; i++) {
+      for (let j = 0; j < density; j++) {
+        myPoints.current.push({
+          currentOffset: Math.random(),
+          speed: Math.random() * 0.01,
+          curve: allTheCurves[i],
+          curPosition: Math.random(),
+        });
+      }
+    }
   });
 
-  const BrainMaterial = shaderMaterial(
+  useFrame(() => {
+    const currentPosition = brainGeo.current.attributes.position.array;
+
+    for (let i = 0; i < myPoints.current.length; i++) {
+      myPoints.current[i].curPosition += myPoints.current[i].speed;
+      myPoints.current[i].curPosition = myPoints.current[i].curPosition % 1;
+
+      const curPoint = myPoints.current[i].curve.getPointAt(
+        myPoints.current[i].curPosition
+      );
+
+      currentPosition[i * 3] = curPoint.x;
+      currentPosition[i * 3 + 1] = curPoint.y;
+      currentPosition[i * 3 + 2] = curPoint.z;
+    }
+
+    brainGeo.current.attributes.position.needsUpdate = true;
+  });
+
+  const BrainParticleMaterial = shaderMaterial(
     {
       time: 0,
-      color: new THREE.Color(1, 0.2, 0),
-      color2: new THREE.Color(0.1, 0.2, 1.0),
+      color: new THREE.Color(`#F3AA60`),
+      color2: new THREE.Color(`#1D5B79`),
     },
-    // vProgress = abs(sin(vUv.x*4. + time));
     // vertex shader
     /*glsl*/ `
     varying vec2 vUv;
     uniform float time;
     varying float vProgress;
+    attribute float random;
     void main() {
       vUv = uv;
-      vProgress = smoothstep(-1.,1.,sin(vUv.x*8. + time));
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      vec4 mvPosition = modelViewMatrix * vec4(position, 1.);
+      gl_PointSize = random*2. *(1./-mvPosition.z);
     }
   `,
     // fragment shader
     /*glsl*/ `
     uniform float time;
-    uniform vec3 color;
-    uniform vec3 color2;
-    varying vec2 vUv;
-    varying float vProgress;
     void main() {
-      vec3 finalColor = mix(color, color2, vProgress);
-      gl_FragColor.rgba = vec4(finalColor,1.);
+      float disc = length(gl_PointCoord.xy - vec2(0.5));
+      float opacity = 0.3*smoothstep(0.5,0.4,disc);
+      
+      gl_FragColor.rgba = vec4(vec3(opacity),1.);
     }
   `
   );
 
   // declaratively
-  extend({ BrainMaterial });
+  extend({ BrainParticleMaterial });
 
   return (
     <>
-      <mesh>
-        <tubeGeometry args={[curve, 64, 0.001, 2, false]} />
-        <brainMaterial
-          ref={brainMat}
-          side={THREE.DoubleSide}
+      <points>
+        <bufferGeometry attach="geometry" ref={brainGeo}>
+          <bufferAttribute
+            attach="attributes-position"
+            count={positions.length / 3}
+            array={positions}
+            itemSize={3}
+          />
+          <bufferAttribute
+            attach="attributes-random"
+            count={randomsSize.length}
+            array={randomsSize}
+            itemSize={1}
+          />
+        </bufferGeometry>
+        <brainParticleMaterial
+          attach="material"
           transparent={true}
           depthTest={false}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
-          wireframe={true}
         />
-      </mesh>
-    </>
-  );
-}
-
-function Tubes({ allthecurve }) {
-  return (
-    <>
-      {allthecurve.map((curve, index) => (
-        <Tube curve={curve} key={index} />
-      ))}
+      </points>
     </>
   );
 }
@@ -88,12 +148,12 @@ function Tubes({ allthecurve }) {
 export default function App() {
   return (
     <Canvas camera={{ position: [0, 0, 0.3], near: 0.001, far: 5 }}>
-      <color attach="background" args={["black"]} />
+      <color attach="background" args={["#0f151c"]} />
       <ambientLight />
       <pointLight position={[10, 10, 10]} />
 
-      <Tubes allthecurve={brainCurves} />
-
+      <Tubes allTheCurves={brainCurves} />
+      <BrainParticls allTheCurves={brainCurves} />
       <OrbitControls />
     </Canvas>
   );
